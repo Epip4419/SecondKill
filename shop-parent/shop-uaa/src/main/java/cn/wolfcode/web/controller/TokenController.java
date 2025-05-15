@@ -118,7 +118,7 @@ public class TokenController {
     public static Connection getConn() throws Exception {
         String url = "jdbc:mysql://127.0.0.1:3306/shop-uaa?serverTimezone=GMT%2B8&useUnicode=true&characterEncoding=UTF-8";
         String username = "root";
-        String password = "admin";
+        String password = "root123";
         String driver = "com.mysql.jdbc.Driver";
         Class.forName(driver);
         return DriverManager.getConnection(url, username, password);
