@@ -55,6 +55,7 @@ public class OrderInfoSeviceImpl implements IOrderInfoService {
         orderInfo.setCreateDate(now);
         orderInfo.setDeliveryAddrId(1L);
         orderInfo.setIntergral(vo.getIntergral());
+        //ID生成器，雪花算法
         orderInfo.setOrderNo(IdGenerateUtil.get().nextId() + "");
         orderInfo.setPayType(OrderInfo.PAY_TYPE_ONLINE);
         orderInfo.setProductCount(1);
