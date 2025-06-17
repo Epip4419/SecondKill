@@ -10,6 +10,7 @@ import cn.wolfcode.feign.ProductFeignApi;
 import cn.wolfcode.mapper.SeckillProductMapper;
 import cn.wolfcode.redis.SeckillRedisKey;
 import cn.wolfcode.service.ISeckillProductService;
+import cn.wolfcode.util.AssertUtils;
 import com.alibaba.fastjson.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -103,7 +104,7 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
     @Cacheable(key = "'selectByIdAndTime:' + #time + ':' + #seckillId")
     public SeckillProductVo selectByIdAndTime(Long seckillId, Integer time) {
         SeckillProduct seckillProduct = seckillProductMapper.selectByIdAndTime(seckillId, time);
-
+        //远程调用
         Result<List<Product>> result = productFeignApi.selectByIdList(Collections.singletonList(seckillProduct.getProductId()));
         if (result.hasError() || result.getData() == null || result.getData().size() == 0) {
             throw new BusinessException(new CodeMsg(result.getCode(), result.getMsg()));
@@ -128,7 +129,15 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
     }*/
 
     @Override
+    @CacheEvict(key = "'selectByIdAndTime:'+#id")
     public void decrStockCount(Long id) {
-        seckillProductMapper.decrStock(id);
+        synchronized (this){
+            //先查库存
+            int vo= seckillProductMapper.getStockCount(id);
+            AssertUtils.isTrue(vo>0,"库存不足！");
+            //再扣库存
+            seckillProductMapper.decrStock(id);
+
+        }
     }
 }
