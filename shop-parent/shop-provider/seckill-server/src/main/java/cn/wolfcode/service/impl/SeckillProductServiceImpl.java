@@ -19,6 +19,7 @@ import org.springframework.cache.annotation.CacheConfig;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -33,6 +34,9 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
     private SeckillProductMapper seckillProductMapper;
     @Autowired
     private StringRedisTemplate redisTemplate;
+    @Autowired
+    private RedisScript<Boolean> redisScript;
+
     @Autowired
     private ProductFeignApi productFeignApi;
 //    @Autowired
@@ -130,14 +134,43 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
 
     @Override
     @CacheEvict(key = "'selectByIdAndTime:'+#id")
-    public void decrStockCount(Long id) {
-        synchronized (this){
+    public void decrStockCount(Long id,Integer time) {
+        //使用redis实现分布式锁
+        //1.锁哪个对象->当前场次的商品对象
+        //2.如何实现->①.使用redis的setnx命令（如果已经存在key，则其他线程无法创建key。该方法存在无法原子性地存储锁和设置过期时间的问题
+        // ②使用lua脚本，可以设置过期时间，防止了程序挂掉无法清除之前设置的key的问题
+        //3.存在哪里->使用redis的String-value结构，存放在redis中
+        //4.如果线程拿不到锁，应该执行什么策略？阻塞/自旋/抛出异常
+        String key="seckill:product:stockCount"+time+":"+id;
+        try {
+            Boolean flag = false;
+            int count = 0;
+            do {
+                //①使用setnx命令
+                //flag = redisTemplate.opsForValue().setIfAbsent(key,"1");
+                //②使用lua脚本
+                flag = redisTemplate.execute(redisScript,Collections.singletonList(key),"1","10");
+                if (flag != null && flag) {
+                    break;
+                }
+                AssertUtils.isTrue(count++ < 5,"系统繁忙，请稍后再试");
+                Thread.sleep(10);
+
+            }while (true);
+
+
             //先查库存
             int vo= seckillProductMapper.getStockCount(id);
             AssertUtils.isTrue(vo>0,"库存不足！");
             //再扣库存
             seckillProductMapper.decrStock(id);
-
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } finally {
+            //5.释放锁
+            redisTemplate.delete(key);
         }
+
+
     }
 }
