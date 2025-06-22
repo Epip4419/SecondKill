@@ -11,6 +11,7 @@ import cn.wolfcode.mapper.SeckillProductMapper;
 import cn.wolfcode.redis.SeckillRedisKey;
 import cn.wolfcode.service.ISeckillProductService;
 import cn.wolfcode.util.AssertUtils;
+import cn.wolfcode.util.IdGenerateUtil;
 import com.alibaba.fastjson.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -24,6 +25,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -39,6 +43,9 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
 
     @Autowired
     private ProductFeignApi productFeignApi;
+
+    @Autowired
+    private ScheduledExecutorService scheduledExecutorService;
 //    @Autowired
 //    private RocketMQTemplate rocketMQTemplate;
 
@@ -142,14 +149,20 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
         //3.存在哪里->使用redis的String-value结构，存放在redis中
         //4.如果线程拿不到锁，应该执行什么策略？阻塞/自旋/抛出异常
         String key="seckill:product:stockCount"+time+":"+id;
+        String threadId="";
+        ScheduledFuture<?> future=null;
         try {
             Boolean flag = false;
             int count = 0;
+            int timeout = 5;
             do {
+                //生成分布式唯一id
+                threadId = IdGenerateUtil.get().nextId()+"";
                 //①使用setnx命令
                 //flag = redisTemplate.opsForValue().setIfAbsent(key,"1");
                 //②使用lua脚本
-                flag = redisTemplate.execute(redisScript,Collections.singletonList(key),"1","10");
+
+                flag = redisTemplate.execute(redisScript,Collections.singletonList(key),threadId,timeout+"");
                 if (flag != null && flag) {
                     break;
                 }
@@ -157,6 +170,23 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
                 Thread.sleep(10);
 
             }while (true);
+            //加锁成功，创建 WatchDog 监听业务是否执行完成，实现续期操作
+            long delayTime=(long) (timeout*0.8);
+            String finalThreadId=threadId;
+            future= scheduledExecutorService.scheduleAtFixedRate(
+                    ()->{
+                        //1.查询 Redis中key是否存在，如果存在，就续期
+                        String value=redisTemplate.opsForValue().get(key);
+                        if (finalThreadId.equals(value)) {
+                            //1.1将当前key再次续期
+                            redisTemplate.expire(key,delayTime+2,TimeUnit.SECONDS);
+                            return;
+                        }
+                    },
+                    delayTime,
+                    delayTime,
+                    TimeUnit.SECONDS
+                    );
 
 
             //先查库存
@@ -168,7 +198,16 @@ public class SeckillProductServiceImpl implements ISeckillProductService {
             throw new RuntimeException(e);
         } finally {
             //5.释放锁
-            redisTemplate.delete(key);
+            //先根据key获取到value，然后再比较value的值与当前的threadId是否相同
+            String value = redisTemplate.opsForValue().get(key);
+            if (threadId.equals(value)) {
+                redisTemplate.delete(key);
+            }
+            if (future != null) {
+                future.cancel(true);
+
+            }
+
         }
 
 

@@ -45,7 +45,7 @@ public class CacheConfig {
     public RedisScript<Boolean> redisScript() {
         DefaultRedisScript<Boolean> redisScript = new DefaultRedisScript<>();
         redisScript.setResultType(Boolean.class);
-        redisScript.setLocation(new ClassPathResource("META-INF/scripts/redis_lock_lua.lua"));
+        redisScript.setLocation(new ClassPathResource("META-INF.scripts/redis_lock_lua.lua"));
         return redisScript;
     }
 
